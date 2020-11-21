@@ -49,7 +49,7 @@ typedef struct Dav1dRef Dav1dRef;
 typedef struct Dav1dLogger {
     void *cookie; ///< Custom data to pass to the callback.
     /**
-     * Logger callback. Default prints to stderr. May be NULL to disable logging.
+     * Logger callback. May be NULL to disable logging.
      *
      * @param cookie Custom pointer passed to all calls.
      * @param format The vprintf compatible format string.
@@ -65,8 +65,9 @@ typedef struct Dav1dSettings {
     int operating_point; ///< select an operating point for scalable AV1 bitstreams (0 - 31)
     int all_layers; ///< output all spatial layers of a scalable AV1 biststream
     unsigned frame_size_limit; ///< maximum frame size, in pixels (0 = unlimited)
-    Dav1dPicAllocator allocator;
-    Dav1dLogger logger;
+    uint8_t reserved[32]; ///< reserved for future use
+    Dav1dPicAllocator allocator; ///< Picture allocator callback.
+    Dav1dLogger logger; ///< Logger callback.
 } Dav1dSettings;
 
 /**
@@ -143,7 +144,7 @@ DAV1D_API int dav1d_send_data(Dav1dContext *c, Dav1dData *in);
  *                                  passed-in arguments.
  *
  * @note To drain buffered frames from the decoder (i.e. on end of stream),
- *       call this function until it returns -EAGAIN.
+ *       call this function until it returns DAV1D_ERR(EAGAIN).
  *
  * @code{.c}
  *  Dav1dData data = { 0 };
@@ -156,11 +157,11 @@ DAV1D_API int dav1d_send_data(Dav1dContext *c, Dav1dData *in);
  *      // Keep going even if the function can't consume the current data
  *         packet. It eventually will after one or more frames have been
  *         returned in this loop.
- *      if (res < 0 && res != -EAGAIN)
+ *      if (res < 0 && res != DAV1D_ERR(EAGAIN))
  *          free_and_abort();
  *      res = dav1d_get_picture(c, &p);
  *      if (res < 0) {
- *          if (res != -EAGAIN)
+ *          if (res != DAV1D_ERR(EAGAIN))
  *              free_and_abort();
  *      } else
  *          output_and_unref_picture(&p);
@@ -171,7 +172,7 @@ DAV1D_API int dav1d_send_data(Dav1dContext *c, Dav1dData *in);
  *  do {
  *      res = dav1d_get_picture(c, &p);
  *      if (res < 0) {
- *          if (res != -EAGAIN)
+ *          if (res != DAV1D_ERR(EAGAIN))
  *              free_and_abort();
  *      } else
  *          output_and_unref_picture(&p);

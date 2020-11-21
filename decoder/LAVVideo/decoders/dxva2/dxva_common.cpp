@@ -30,7 +30,7 @@ DWORD dxva_align_dimensions(AVCodecID codec, DWORD dim)
   // MPEG-2 needs higher alignment on Intel cards, and it doesn't seem to harm anything to do it for all cards.
   if (codec == AV_CODEC_ID_MPEG2VIDEO)
     align <<= 1;
-  else if (codec == AV_CODEC_ID_HEVC)
+  else if (codec == AV_CODEC_ID_HEVC || codec == AV_CODEC_ID_AV1)
     align = 128;
 
   return FFALIGN(dim, align);
@@ -50,8 +50,12 @@ static const int prof_hevc_main[] = { FF_PROFILE_HEVC_MAIN, FF_PROFILE_UNKNOWN }
 static const int prof_hevc_main10[] = { FF_PROFILE_HEVC_MAIN_10, FF_PROFILE_UNKNOWN };
 static const int prof_vp9_0[] = { FF_PROFILE_VP9_0, FF_PROFILE_UNKNOWN };
 static const int prof_vp9_2_10bit[] = { FF_PROFILE_VP9_2, FF_PROFILE_UNKNOWN };
+static const int prof_av1_0[] = {FF_PROFILE_AV1_MAIN, FF_PROFILE_UNKNOWN};
+static const int prof_av1_1[] = {FF_PROFILE_AV1_HIGH, FF_PROFILE_UNKNOWN};
+static const int prof_av1_2[] = {FF_PROFILE_AV1_PROFESSIONAL, FF_PROFILE_UNKNOWN};
 
 /* XXX Prefered modes must come first */
+// clang-format off
 const dxva_mode_t dxva_modes[] = {
   /* MPEG-1/2 */
   { "MPEG-2 variable-length decoder",                                               &DXVA2_ModeMPEG2_VLD,                   AV_CODEC_ID_MPEG2VIDEO, prof_mpeg2_main },
@@ -111,12 +115,19 @@ const dxva_mode_t dxva_modes[] = {
 
   /* HEVC / H.265 */
   { "HEVC / H.265 variable-length decoder, main",                                   &DXVA_ModeHEVC_VLD_Main,                AV_CODEC_ID_HEVC, prof_hevc_main },
-  { "HEVC / H.265 variable-length decoder, main10",                                 &DXVA_ModeHEVC_VLD_Main10,              AV_CODEC_ID_HEVC, prof_hevc_main10, 1 },
+  { "HEVC / H.265 variable-length decoder, main10",                                 &DXVA_ModeHEVC_VLD_Main10,              AV_CODEC_ID_HEVC, prof_hevc_main10 },
 
   /* VP8/9 */
   { "VP9 variable-length decoder, profile 0",                                       &DXVA_ModeVP9_VLD_Profile0,             AV_CODEC_ID_VP9, prof_vp9_0 },
-  { "VP9 variable-length decoder, 10bit, profile 2",                                &DXVA_ModeVP9_VLD_10bit_Profile2,       AV_CODEC_ID_VP9, prof_vp9_2_10bit, 1 },
+  { "VP9 variable-length decoder, 10bit, profile 2",                                &DXVA_ModeVP9_VLD_10bit_Profile2,       AV_CODEC_ID_VP9, prof_vp9_2_10bit },
   { "VP8 variable-length decoder",                                                  &DXVA_ModeVP8_VLD,                      0 },
+
+  /* AV1 */
+  { "AV1 variable-length decoder, profile 0",                                       &DXVA_ModeAV1_VLD_Profile0,             AV_CODEC_ID_AV1, prof_av1_0 },
+  { "AV1 variable-length decoder, profile 1",                                       &DXVA_ModeAV1_VLD_Profile1,             0 },
+  { "AV1 variable-length decoder, profile 2",                                       &DXVA_ModeAV1_VLD_Profile2,             0 },
+  { "AV1 variable-length decoder, profile 2 12-bit",                                &DXVA_ModeAV1_VLD_12bit_Profile2,       0 },
+  { "AV1 variable-length decoder, profile 2 12-bit 4:2:0",                          &DXVA_ModeAV1_VLD_12bit_Profile2_420,   0 },
 
   /* Intel specific modes (only useful on older GPUs) */
   { "H.264 variable-length decoder, no film grain technology (Intel ClearVideo)",   &DXVADDI_Intel_ModeH264_E,              AV_CODEC_ID_H264, prof_h264_high },
@@ -127,6 +138,7 @@ const dxva_mode_t dxva_modes[] = {
 
   { nullptr, nullptr, 0 }
 };
+// clang-format on
 
 const dxva_mode_t *get_dxva_mode_from_guid(const GUID *guid)
 {
@@ -137,7 +149,7 @@ const dxva_mode_t *get_dxva_mode_from_guid(const GUID *guid)
   return nullptr;
 }
 
-int check_dxva_mode_compatibility(const dxva_mode_t *mode, int codec, int profile)
+int check_dxva_mode_compatibility(const dxva_mode_t *mode, int codec, int profile, bool b8Bit)
 {
   if (mode->codec != codec)
     return 0;
@@ -149,13 +161,18 @@ int check_dxva_mode_compatibility(const dxva_mode_t *mode, int codec, int profil
       if (mode->profiles[i] == profile)
         return 1;
     }
+
+    /* hevc main and main10 are very similar, and in some cases streams can be flagged as main10, but actually contain 8-bit content */
+    if (codec == AV_CODEC_ID_HEVC && mode->profiles[0] == FF_PROFILE_HEVC_MAIN && profile == FF_PROFILE_HEVC_MAIN_10 && b8Bit)
+        return 1;
+
     return 0;
   }
 
   return 1;
 }
 
-int check_dxva_codec_profile(AVCodecID codec, AVPixelFormat pix_fmt, int profile, int hwpixfmt)
+int check_dxva_codec_profile(AVCodecID codec, AVPixelFormat pix_fmt, int profile, int level, int hwpixfmt)
 {
   // check mpeg2 pixfmt
   if (codec == AV_CODEC_ID_MPEG2VIDEO && pix_fmt != AV_PIX_FMT_YUV420P && pix_fmt != AV_PIX_FMT_YUVJ420P && pix_fmt != hwpixfmt && pix_fmt != AV_PIX_FMT_NONE)
@@ -169,6 +186,10 @@ int check_dxva_codec_profile(AVCodecID codec, AVPixelFormat pix_fmt, int profile
   if (codec == AV_CODEC_ID_H264 && profile != FF_PROFILE_UNKNOWN && !H264_CHECK_PROFILE(profile))
     return 1;
 
+  // check h264 level
+  if (codec == AV_CODEC_ID_H264 && level >= 60)
+      return 1;
+
   // check wmv/vc1 profile
   if ((codec == AV_CODEC_ID_WMV3 || codec == AV_CODEC_ID_VC1) && profile == FF_PROFILE_VC1_COMPLEX)
     return 1;
@@ -178,8 +199,12 @@ int check_dxva_codec_profile(AVCodecID codec, AVPixelFormat pix_fmt, int profile
     return 1;
 
   // check vp9 profile/pixfmt
-  if (codec == AV_CODEC_ID_VP9 && (!VP9_CHECK_PROFILE(profile) || (pix_fmt != AV_PIX_FMT_YUV420P && pix_fmt != AV_PIX_FMT_YUV420P10 && pix_fmt != AV_PIX_FMT_DXVA2_VLD && pix_fmt != AV_PIX_FMT_NONE)))
+  if (codec == AV_CODEC_ID_VP9 && (!VP9_CHECK_PROFILE(profile) || (pix_fmt != AV_PIX_FMT_YUV420P && pix_fmt != AV_PIX_FMT_YUV420P10 && pix_fmt != hwpixfmt && pix_fmt != AV_PIX_FMT_NONE)))
     return 1;
+
+  // check av1 profile/pixfmt
+  if (codec == AV_CODEC_ID_AV1 && (profile != FF_PROFILE_AV1_MAIN || (pix_fmt != AV_PIX_FMT_YUV420P  && pix_fmt != AV_PIX_FMT_YUV420P10 && pix_fmt != hwpixfmt && pix_fmt != AV_PIX_FMT_NONE)))
+      return 1;
 
   return 0;
 }
